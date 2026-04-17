@@ -1,0 +1,347 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+
+<title>Huffman Coding Visualizer</title>
+
+<!-- Bootstrap -->
+<link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
+
+<style>
+/* ===== GENERAL STYLING ===== */
+body {
+    font-family: 'Segoe UI';
+    background: #f5f7fb;
+    color: #222;
+}
+
+.card {
+    background: #fff;
+    border-radius: 15px;
+    box-shadow: 0 10px 25px rgba(0,0,0,0.1);
+}
+
+textarea {
+    width: 100%;
+    height: 100px;
+    border-radius: 10px;
+    padding: 10px;
+    border: 1px solid #ccc;
+}
+
+.output {
+    background: #f1f1f1;
+    padding: 10px;
+    border-radius: 10px;
+}
+
+canvas {
+    background: #fff;
+    border: 1px solid #ccc;
+    border-radius: 10px;
+    cursor: grab;
+}
+
+button:hover {
+    transform: scale(1.05);
+    transition: 0.3s;
+}
+</style>
+</head>
+
+<body>
+
+<div class="container mt-4">
+
+    <h1 class="text-center">Huffman Coding Visualizer</h1>
+
+    <!-- ===== INPUT SECTION ===== -->
+    <div class="card p-3">
+        <textarea id="inputText" placeholder="Enter text..."></textarea>
+
+        <!-- File Upload -->
+        <input type="file" class="form-control mt-2" onchange="loadFile(event)">
+
+        <!-- Folder Upload -->
+        <input type="file" webkitdirectory multiple class="form-control mt-2" onchange="loadFolder(event)">
+
+        <!-- Buttons -->
+        <div class="mt-2">
+            <button class="btn btn-primary" onclick="runHuffman()">Generate</button>
+            <button class="btn btn-success" onclick="decodeText()">Decode</button>
+            <button class="btn btn-warning" onclick="downloadAll()">Download</button>
+            <button class="btn btn-info" onclick="copyText()">Copy</button>
+        </div>
+    </div>
+
+    <!-- ===== OUTPUT SECTION ===== -->
+    <div class="card p-3 mt-3">
+        <h4>Codes</h4>
+        <table id="table" class="table table-bordered"></table>
+
+        <h4>Encoded</h4>
+        <div id="encoded" class="output"></div>
+
+        <h4>Decoded (Animated)</h4>
+        <div id="decoded" class="output"></div>
+
+        <h4>Compression vs ASCII</h4>
+        <div id="ratio"></div>
+    </div>
+
+    <!-- ===== TREE VISUALIZATION ===== -->
+    <div class="card p-3 mt-3">
+        <h4>Tree (Zoom + Pan)</h4>
+        <canvas id="treeCanvas" width="900" height="400"></canvas>
+    </div>
+
+</div>
+
+<script>
+
+/* ===== NODE CLASS ===== */
+class Node {
+    constructor(char, freq, left = null, right = null) {
+        this.char = char;
+        this.freq = freq;
+        this.left = left;
+        this.right = right;
+    }
+}
+
+/* ===== GLOBAL VARIABLES ===== */
+let globalTree;
+let scale = 1;
+let offsetX = 0;
+let offsetY = 0;
+
+/* ===== HUFFMAN GENERATION ===== */
+function runHuffman() {
+    const text = document.getElementById("inputText").value;
+    if (!text.trim()) {
+        alert("Enter text");
+        return;
+    }
+
+    // Frequency calculation
+    let freq = {};
+    for (let ch of text) {
+        freq[ch] = (freq[ch] || 0) + 1;
+    }
+
+    // Create nodes
+    let nodes = Object.keys(freq).map(ch => new Node(ch, freq[ch]));
+
+    // Build tree
+    while (nodes.length > 1) {
+        nodes.sort((a, b) => a.freq - b.freq);
+
+        const left = nodes.shift();
+        const right = nodes.shift();
+
+        nodes.push(new Node(null, left.freq + right.freq, left, right));
+    }
+
+    const tree = nodes[0];
+    globalTree = tree;
+
+    // Generate codes
+    let codes = {};
+
+    function generateCodes(node, code = "") {
+        if (!node) return;
+
+        if (node.char !== null) {
+            codes[node.char] = code;
+        }
+
+        generateCodes(node.left, code + "0");
+        generateCodes(node.right, code + "1");
+    }
+
+    generateCodes(tree);
+
+    // Display table
+    let tableHTML = "<tr><th>Char</th><th>Freq</th><th>Code</th></tr>";
+
+    for (let ch in codes) {
+        tableHTML += `
+            <tr>
+                <td>${ch}</td>
+                <td>${freq[ch]}</td>
+                <td>${codes[ch]}</td>
+            </tr>`;
+    }
+
+    document.getElementById("table").innerHTML = tableHTML;
+
+    // Encode text
+    let encoded = "";
+    for (let ch of text) {
+        encoded += codes[ch];
+    }
+
+    document.getElementById("encoded").innerText = encoded;
+
+    // Compression calculation
+    let asciiBits = text.length * 8;
+    let compression = ((asciiBits - encoded.length) / asciiBits * 100).toFixed(2);
+
+    document.getElementById("ratio").innerHTML = `
+        ASCII Bits: ${asciiBits}<br>
+        Huffman Bits: ${encoded.length}<br>
+        Compression: ${compression}%
+    `;
+
+    playSound();
+    drawTree(tree);
+}
+
+/* ===== DECODING ===== */
+function decodeText() {
+    let encoded = document.getElementById("encoded").innerText;
+    let node = globalTree;
+    let output = document.getElementById("decoded");
+
+    output.innerHTML = "";
+
+    let i = 0;
+
+    function step() {
+        if (i >= encoded.length) return;
+
+        node = encoded[i] === '0' ? node.left : node.right;
+
+        if (node.char) {
+            output.innerHTML += `<span style="color:green;font-weight:bold">${node.char}</span>`;
+            node = globalTree;
+        }
+
+        i++;
+        setTimeout(step, 150);
+    }
+
+    step();
+}
+
+/* ===== TREE DRAWING ===== */
+function drawTree(root) {
+    let canvas = document.getElementById("treeCanvas");
+    let ctx = canvas.getContext("2d");
+
+    ctx.setTransform(scale, 0, 0, scale, offsetX, offsetY);
+    ctx.clearRect(-offsetX/scale, -offsetY/scale, canvas.width/scale, canvas.height/scale);
+
+    function draw(node, x, y, gap) {
+        if (!node) return;
+
+        // Node
+        ctx.beginPath();
+        ctx.arc(x, y, 15, 0, 2 * Math.PI);
+        ctx.fillStyle = "#007bff";
+        ctx.fill();
+        ctx.stroke();
+
+        ctx.fillStyle = "white";
+        ctx.fillText((node.char || "") + ":" + node.freq, x - 15, y + 5);
+
+        // Left child
+        if (node.left) {
+            ctx.moveTo(x, y);
+            ctx.lineTo(x - gap, y + 60);
+            ctx.stroke();
+            ctx.fillText("0", x - gap/2, y + 40);
+            draw(node.left, x - gap, y + 60, gap / 1.5);
+        }
+
+        // Right child
+        if (node.right) {
+            ctx.moveTo(x, y);
+            ctx.lineTo(x + gap, y + 60);
+            ctx.stroke();
+            ctx.fillText("1", x + gap/2, y + 40);
+            draw(node.right, x + gap, y + 60, gap / 1.5);
+        }
+    }
+
+    draw(root, 450, 20, 200);
+}
+
+/* ===== ZOOM ===== */
+let canvas = document.getElementById("treeCanvas");
+
+canvas.addEventListener("wheel", e => {
+    scale += e.deltaY * -0.001;
+    scale = Math.min(Math.max(0.5, scale), 3);
+    drawTree(globalTree);
+});
+
+/* ===== PAN ===== */
+let isDragging = false;
+let startX, startY;
+
+canvas.addEventListener("mousedown", e => {
+    isDragging = true;
+    startX = e.clientX - offsetX;
+    startY = e.clientY - offsetY;
+});
+
+canvas.addEventListener("mouseup", () => isDragging = false);
+
+canvas.addEventListener("mousemove", e => {
+    if (isDragging) {
+        offsetX = e.clientX - startX;
+        offsetY = e.clientY - startY;
+        drawTree(globalTree);
+    }
+});
+
+/* ===== FILE HANDLING ===== */
+function loadFile(event) {
+    let reader = new FileReader();
+    reader.onload = () => {
+        document.getElementById("inputText").value = reader.result;
+    };
+    reader.readAsText(event.target.files[0]);
+}
+
+function loadFolder(event) {
+    let files = event.target.files;
+
+    if (files.length > 0) {
+        let reader = new FileReader();
+        reader.onload = () => {
+            document.getElementById("inputText").value = reader.result;
+        };
+        reader.readAsText(files[0]);
+    }
+}
+
+/* ===== UTILITIES ===== */
+function downloadAll() {
+    download(document.getElementById("encoded").innerText, "encoded.txt");
+}
+
+function download(data, filename) {
+    let a = document.createElement("a");
+    a.href = URL.createObjectURL(new Blob([data]));
+    a.download = filename;
+    a.click();
+}
+
+function copyText() {
+    navigator.clipboard.writeText(document.getElementById("encoded").innerText);
+    alert("Copied!");
+}
+
+function playSound() {
+    let audio = new Audio("https://www.soundjay.com/button/sounds/button-3.mp3");
+    audio.play();
+}
+
+</script>
+
+</body>
+</html>
